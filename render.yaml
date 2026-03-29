@@ -12,7 +12,7 @@ services:
       - key: QA_MODEL_TYPE
         value: extractive
       - key: QA_MODEL_NAME
-        value: deepset/roberta-base-squad2
+        value: distilbert-base-uncased-distilled-squad
       - key: USE_FAISS
         value: false
       - key: CHUNK_SIZE
@@ -20,6 +20,9 @@ services:
       - key: CHUNK_OVERLAP
         value: 120
       - key: TOP_K_CHUNKS
-        value: 4
+        value: 3
       - key: MAX_CONTEXT_CHARS
-        value: 2500
+        value: 1800
+
+
+

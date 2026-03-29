@@ -24,9 +24,9 @@ TEMPLATES_DIR = BASE_DIR / 'templates'
 STATIC_DIR = BASE_DIR / 'static'
 
 DEFAULT_GENERATIVE_MODEL = 'google/flan-t5-base'
-DEFAULT_EXTRACTIVE_MODEL = 'deepset/roberta-base-squad2'
-MAX_CONTEXT_CHARS = int(os.getenv('MAX_CONTEXT_CHARS', '2500'))
-TOP_K_CHUNKS = int(os.getenv('TOP_K_CHUNKS', '4'))
+DEFAULT_EXTRACTIVE_MODEL = 'distilbert-base-uncased-distilled-squad'
+MAX_CONTEXT_CHARS = int(os.getenv('MAX_CONTEXT_CHARS', '1800'))
+TOP_K_CHUNKS = int(os.getenv('TOP_K_CHUNKS', '3'))
 CHUNK_SIZE = int(os.getenv('CHUNK_SIZE', '700'))
 CHUNK_OVERLAP = int(os.getenv('CHUNK_OVERLAP', '120'))
 USE_FAISS = os.getenv('USE_FAISS', 'false').lower() == 'true'
@@ -363,3 +363,5 @@ async def ask_form(request: Request, question: str = Form(...)) -> HTMLResponse:
             'contexts': contexts,
         },
     )
+
+
