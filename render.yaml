@@ -12,7 +12,7 @@ services:
       - key: QA_MODEL_TYPE
         value: extractive
       - key: QA_MODEL_NAME
-        value: distilbert-base-uncased-distilled-squad
+        value: csarron/mobilebert-uncased-squad-v2
       - key: USE_FAISS
         value: false
       - key: CHUNK_SIZE
@@ -23,3 +23,4 @@ services:
         value: 2
       - key: MAX_CONTEXT_CHARS
         value: 1200
+

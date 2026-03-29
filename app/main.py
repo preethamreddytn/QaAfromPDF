@@ -23,7 +23,7 @@ BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / 'templates'
 STATIC_DIR = BASE_DIR / 'static'
 
-DEFAULT_EXTRACTIVE_MODEL = 'distilbert-base-uncased-distilled-squad'
+DEFAULT_EXTRACTIVE_MODEL = 'csarron/mobilebert-uncased-squad-v2'
 MAX_CONTEXT_CHARS = int(os.getenv('MAX_CONTEXT_CHARS', '1200'))
 TOP_K_CHUNKS = int(os.getenv('TOP_K_CHUNKS', '2'))
 CHUNK_SIZE = int(os.getenv('CHUNK_SIZE', '700'))
@@ -341,3 +341,4 @@ async def ask_form(request: Request, question: str = Form(...)) -> HTMLResponse:
             'contexts': contexts,
         },
     )
+

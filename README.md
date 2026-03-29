@@ -6,7 +6,7 @@ A FastAPI application that:
 - extracts document text
 - chunks and indexes content in memory
 - optionally uses FAISS for vector retrieval
-- answers questions with a lightweight extractive scorer
+- answers questions with a Hugging Face MobileBERT extractive QA model
 - includes a minimal browser UI
 
 ## Features
@@ -75,7 +75,7 @@ Recommended steps:
 3. Render will use:
    - build command: `pip install --upgrade pip && pip install -r requirements.txt`
    - start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-4. The Render config now uses the built-in lightweight extractor, which avoids transformer memory spikes on 512 MB instances.
+4. The Render config now uses csarron/mobilebert-uncased-squad-v2, a smaller MobileBERT QA model with a substantially lighter footprint than larger QA models.
 
 ### AWS App Runner / EC2 / ECS
 
@@ -100,4 +100,5 @@ gcloud app deploy
 
 - The app stores chunks in process memory, so indexed documents reset on restart.
 - FAISS is optional; if disabled or unavailable, the app falls back to the built-in in-memory retrieval path.
-- The current default avoids loading transformer QA models so deployment stays within tighter memory limits.
+- The current default uses a smaller MobileBERT QA model to reduce deployment memory pressure.
+
