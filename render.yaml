@@ -20,9 +20,6 @@ services:
       - key: CHUNK_OVERLAP
         value: 120
       - key: TOP_K_CHUNKS
-        value: 3
+        value: 2
       - key: MAX_CONTEXT_CHARS
-        value: 1800
-
-
-
+        value: 1200

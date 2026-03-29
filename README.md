@@ -6,7 +6,7 @@ A FastAPI application that:
 - extracts document text
 - chunks and indexes content in memory
 - optionally uses FAISS for vector retrieval
-- answers questions with a Hugging Face model
+- answers questions with a lightweight extractive scorer
 - includes a minimal browser UI
 
 ## Features
@@ -29,7 +29,7 @@ Open `http://127.0.0.1:8000`.
 
 ## Optional FAISS setup
 
-If you want vector retrieval with FAISS instead of the default in-memory TF-IDF retrieval:
+If you want vector retrieval with FAISS instead of the default lightweight in-memory retrieval:
 
 ```bash
 pip install -r requirements-faiss.txt
@@ -52,13 +52,12 @@ curl -X POST "http://127.0.0.1:8000/ask" ^
   -d "{\"question\":\"What is the main topic?\"}"
 ```
 
-## Model configuration
+## Configuration
 
 Environment variables:
 
-- `QA_MODEL_TYPE=seq2seq` for `google/flan-t5-base`
-- `QA_MODEL_TYPE=extractive` for `deepset/roberta-base-squad2`
-- `QA_MODEL_NAME` overrides the default model name
+- `QA_MODEL_TYPE=lightweight-extractive` uses the built-in low-memory answerer
+- `QA_MODEL_NAME=lightweight-extractive` keeps config aligned with the built-in answerer
 - `USE_FAISS=true` enables FAISS retrieval if optional dependencies are installed
 - `EMBEDDING_MODEL` sets the sentence-transformers model for FAISS mode
 - `CHUNK_SIZE`, `CHUNK_OVERLAP`, `TOP_K_CHUNKS`, `MAX_CONTEXT_CHARS` tune retrieval behavior
@@ -67,7 +66,7 @@ Environment variables:
 
 ### Render
 
-This repo now includes [render.yaml](C:/Users/preet/OneDrive/Documents/New%20project/render.yaml) for one-click Render deployment.
+This repo includes [render.yaml](/C:/Users/preet/projects/CC/render.yaml) for Render deployment.
 
 Recommended steps:
 
@@ -76,7 +75,7 @@ Recommended steps:
 3. Render will use:
    - build command: `pip install --upgrade pip && pip install -r requirements.txt`
    - start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-4. The Render config defaults to `deepset/roberta-base-squad2`, which is lighter and more practical for hosted deployment than `flan-t5-base`.
+4. The Render config now uses the built-in lightweight extractor, which avoids transformer memory spikes on 512 MB instances.
 
 ### AWS App Runner / EC2 / ECS
 
@@ -100,8 +99,5 @@ gcloud app deploy
 ## Notes
 
 - The app stores chunks in process memory, so indexed documents reset on restart.
-- FAISS is optional; if disabled or unavailable, the app falls back to TF-IDF retrieval.
-- Transformer models download on first question, so deployment should allow model caching.
-- For Render, a smaller extractive model is usually more reliable than a larger seq2seq model.
-# CC
-# CC
+- FAISS is optional; if disabled or unavailable, the app falls back to the built-in in-memory retrieval path.
+- The current default avoids loading transformer QA models so deployment stays within tighter memory limits.

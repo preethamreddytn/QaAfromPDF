@@ -4,6 +4,6 @@ entrypoint: uvicorn app.main:app --host 0.0.0.0 --port $PORT
 instance_class: F2
 
 env_variables:
-  QA_MODEL_TYPE: "seq2seq"
-  QA_MODEL_NAME: "google/flan-t5-base"
+  QA_MODEL_TYPE: "extractive"
+  QA_MODEL_NAME: "distilbert-base-uncased-distilled-squad"
   USE_FAISS: "false"

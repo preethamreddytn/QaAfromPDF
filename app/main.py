@@ -23,10 +23,9 @@ BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / 'templates'
 STATIC_DIR = BASE_DIR / 'static'
 
-DEFAULT_GENERATIVE_MODEL = 'google/flan-t5-base'
 DEFAULT_EXTRACTIVE_MODEL = 'distilbert-base-uncased-distilled-squad'
-MAX_CONTEXT_CHARS = int(os.getenv('MAX_CONTEXT_CHARS', '1800'))
-TOP_K_CHUNKS = int(os.getenv('TOP_K_CHUNKS', '3'))
+MAX_CONTEXT_CHARS = int(os.getenv('MAX_CONTEXT_CHARS', '1200'))
+TOP_K_CHUNKS = int(os.getenv('TOP_K_CHUNKS', '2'))
 CHUNK_SIZE = int(os.getenv('CHUNK_SIZE', '700'))
 CHUNK_OVERLAP = int(os.getenv('CHUNK_OVERLAP', '120'))
 USE_FAISS = os.getenv('USE_FAISS', 'false').lower() == 'true'
@@ -201,23 +200,14 @@ class DocumentStore:
 
 class QAService:
     def __init__(self) -> None:
-        qa_mode = os.getenv('QA_MODEL_TYPE', 'seq2seq').lower()
-        if qa_mode == 'extractive':
-            self.model_type = 'extractive'
-            self.model_name = os.getenv('QA_MODEL_NAME', DEFAULT_EXTRACTIVE_MODEL)
-        else:
-            self.model_type = 'seq2seq'
-            self.model_name = os.getenv('QA_MODEL_NAME', DEFAULT_GENERATIVE_MODEL)
+        self.model_type = 'extractive'
+        self.model_name = os.getenv('QA_MODEL_NAME', DEFAULT_EXTRACTIVE_MODEL)
         self.pipe = None
 
     def ensure_loaded(self) -> None:
         if self.pipe is not None:
             return
-
-        if self.model_type == 'extractive':
-            self.pipe = pipeline('question-answering', model=self.model_name, tokenizer=self.model_name)
-        else:
-            self.pipe = pipeline('text2text-generation', model=self.model_name, tokenizer=self.model_name)
+        self.pipe = pipeline('question-answering', model=self.model_name, tokenizer=self.model_name)
         logger.info('Loaded QA model %s (%s)', self.model_name, self.model_type)
 
     def answer(self, question: str, contexts: list[str]) -> str:
@@ -227,20 +217,8 @@ class QAService:
         self.ensure_loaded()
         merged_context = '\n\n'.join(contexts)
         merged_context = merged_context[:MAX_CONTEXT_CHARS]
-
-        if self.model_type == 'extractive':
-            result = self.pipe(question=question, context=merged_context)
-            answer = result['answer'].strip()
-            return answer or 'I could not find a confident answer in the uploaded document.'
-
-        prompt = (
-            'Answer the question using only the context below. '
-            'If the answer is not present, say you could not find it.\n\n'
-            f'Context:\n{merged_context}\n\n'
-            f'Question: {question}\nAnswer:'
-        )
-        result = self.pipe(prompt, max_new_tokens=128, do_sample=False)
-        answer = result[0]['generated_text'].strip()
+        result = self.pipe(question=question, context=merged_context)
+        answer = result['answer'].strip()
         return answer or 'I could not find a confident answer in the uploaded document.'
 
 
@@ -363,5 +341,3 @@ async def ask_form(request: Request, question: str = Form(...)) -> HTMLResponse:
             'contexts': contexts,
         },
     )
-
-
