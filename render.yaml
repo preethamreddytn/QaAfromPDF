@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: document-qa-app
+    runtime: python
+    plan: starter
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: QA_MODEL_TYPE
+        value: extractive
+      - key: QA_MODEL_NAME
+        value: deepset/roberta-base-squad2
+      - key: USE_FAISS
+        value: false
+      - key: CHUNK_SIZE
+        value: 700
+      - key: CHUNK_OVERLAP
+        value: 120
+      - key: TOP_K_CHUNKS
+        value: 4
+      - key: MAX_CONTEXT_CHARS
+        value: 2500

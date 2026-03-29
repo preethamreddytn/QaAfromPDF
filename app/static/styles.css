@@ -1,0 +1,128 @@
+:root {
+    --bg: #f6f2e9;
+    --panel: rgba(255, 252, 247, 0.88);
+    --ink: #1e2a24;
+    --muted: #59685f;
+    --accent: #c96f3b;
+    --accent-dark: #87492a;
+    --line: rgba(30, 42, 36, 0.12);
+    --shadow: 0 20px 60px rgba(62, 44, 24, 0.12);
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: Georgia, "Times New Roman", serif;
+    color: var(--ink);
+    background:
+        radial-gradient(circle at top left, rgba(201, 111, 59, 0.18), transparent 28%),
+        linear-gradient(180deg, #f9f4ea 0%, var(--bg) 100%);
+    min-height: 100vh;
+}
+
+.page {
+    width: min(980px, calc(100% - 2rem));
+    margin: 0 auto;
+    padding: 3rem 0 4rem;
+}
+
+.hero {
+    margin-bottom: 2rem;
+}
+
+.eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 0.8rem;
+    color: var(--accent-dark);
+}
+
+h1, h2 {
+    margin: 0 0 0.75rem;
+    font-weight: 600;
+}
+
+h1 {
+    font-size: clamp(2.5rem, 4vw, 4.3rem);
+    line-height: 0.95;
+    max-width: 11ch;
+}
+
+.lede, .muted {
+    color: var(--muted);
+}
+
+.stats {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-top: 1rem;
+    color: var(--accent-dark);
+}
+
+.card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    box-shadow: var(--shadow);
+    padding: 1.25rem;
+    backdrop-filter: blur(8px);
+}
+
+textarea,
+input[type="file"] {
+    width: 100%;
+    margin-bottom: 0.9rem;
+}
+
+textarea {
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 0.9rem 1rem;
+    resize: vertical;
+    font: inherit;
+    background: rgba(255, 255, 255, 0.8);
+}
+
+button {
+    border: 0;
+    border-radius: 999px;
+    padding: 0.75rem 1.2rem;
+    font: inherit;
+    background: var(--accent);
+    color: white;
+    cursor: pointer;
+}
+
+button:hover {
+    background: var(--accent-dark);
+}
+
+pre {
+    white-space: pre-wrap;
+    background: rgba(255, 255, 255, 0.75);
+    border-radius: 14px;
+    padding: 0.9rem;
+    border: 1px solid var(--line);
+}
+
+.answer-card {
+    margin-bottom: 1rem;
+}
+
+@media (max-width: 640px) {
+    .page {
+        width: min(100% - 1rem, 980px);
+        padding-top: 2rem;
+    }
+}
