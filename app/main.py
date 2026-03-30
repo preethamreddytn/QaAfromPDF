@@ -14,7 +14,6 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from pypdf import PdfReader
-from transformers import pipeline
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -23,19 +22,24 @@ BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / 'templates'
 STATIC_DIR = BASE_DIR / 'static'
 
-DEFAULT_EXTRACTIVE_MODEL = 'csarron/mobilebert-uncased-squad-v2'
-MAX_CONTEXT_CHARS = int(os.getenv('MAX_CONTEXT_CHARS', '1200'))
-TOP_K_CHUNKS = int(os.getenv('TOP_K_CHUNKS', '2'))
+MAX_CONTEXT_CHARS = int(os.getenv('MAX_CONTEXT_CHARS', '1600'))
+TOP_K_CHUNKS = int(os.getenv('TOP_K_CHUNKS', '3'))
 CHUNK_SIZE = int(os.getenv('CHUNK_SIZE', '700'))
 CHUNK_OVERLAP = int(os.getenv('CHUNK_OVERLAP', '120'))
+MAX_SENTENCES_TO_SCAN = int(os.getenv('MAX_SENTENCES_TO_SCAN', '24'))
 USE_FAISS = os.getenv('USE_FAISS', 'false').lower() == 'true'
 
 TOKEN_PATTERN = re.compile(r'\b[a-zA-Z0-9]+\b')
+SENTENCE_SPLIT_PATTERN = re.compile(r'(?<=[.!?])\s+')
+YEAR_PATTERN = re.compile(r'\b(19|20)\d{2}\b')
+NUMBER_PATTERN = re.compile(r'\b\d+(?:\.\d+)?\b')
+PROPER_NOUN_PATTERN = re.compile(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b')
 STOP_WORDS = {
     'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 'has', 'how',
     'in', 'is', 'it', 'of', 'on', 'or', 'that', 'the', 'this', 'to', 'was', 'what',
     'when', 'where', 'which', 'who', 'why', 'with'
 }
+QUESTION_PREFIXES = ('who', 'what', 'when', 'where', 'why', 'how', 'which')
 
 app = FastAPI(title='Document Q&A App', version='1.0.0')
 app.mount('/static', StaticFiles(directory=STATIC_DIR), name='static')
@@ -64,12 +68,41 @@ class ChunkRecord:
     term_total: int
 
 
+@dataclass
+class SentenceCandidate:
+    text: str
+    source_name: str
+    chunk_id: str
+    score: float
+
+
 def tokenize(text: str) -> list[str]:
     return [
         token
         for token in TOKEN_PATTERN.findall(text.lower())
         if token and token not in STOP_WORDS and not token.isdigit()
     ]
+
+
+def split_sentences(text: str) -> list[str]:
+    compact = ' '.join(text.split())
+    if not compact:
+        return []
+    sentences = [sentence.strip() for sentence in SENTENCE_SPLIT_PATTERN.split(compact) if sentence.strip()]
+    return sentences or [compact]
+
+
+def clean_question(question: str) -> str:
+    question = ' '.join(question.split()).strip()
+    return question[:-1] if question.endswith('?') else question
+
+
+def question_type(question: str) -> str:
+    lowered = clean_question(question).lower()
+    for prefix in QUESTION_PREFIXES:
+        if lowered.startswith(prefix + ' ') or lowered == prefix:
+            return prefix
+    return 'generic'
 
 
 class DocumentStore:
@@ -161,11 +194,10 @@ class DocumentStore:
 
         score = 0.0
         for term in overlap:
-            query_weight = query_terms[term]
             normalized_tf = record.term_counts[term] / max(record.term_total, 1)
-            score += query_weight * normalized_tf * self._idf(term)
+            score += query_terms[term] * normalized_tf * self._idf(term)
 
-        score += 0.15 * len(overlap)
+        score += 0.2 * len(overlap)
         return score
 
     def search(self, question: str, top_k: int = TOP_K_CHUNKS) -> list[ChunkRecord]:
@@ -200,26 +232,87 @@ class DocumentStore:
 
 class QAService:
     def __init__(self) -> None:
-        self.model_type = 'extractive'
-        self.model_name = os.getenv('QA_MODEL_NAME', DEFAULT_EXTRACTIVE_MODEL)
+        self.model_type = 'local-extractive'
+        self.model_name = 'local-extractive-v2'
         self.pipe = None
 
-    def ensure_loaded(self) -> None:
-        if self.pipe is not None:
-            return
-        self.pipe = pipeline('question-answering', model=self.model_name, tokenizer=self.model_name)
-        logger.info('Loaded QA model %s (%s)', self.model_name, self.model_type)
+    def _question_bonus(self, q_type: str, sentence: str) -> float:
+        lowered = sentence.lower()
+        bonus = 0.0
+        if q_type == 'when' and (YEAR_PATTERN.search(sentence) or NUMBER_PATTERN.search(sentence)):
+            bonus += 0.8
+        if q_type == 'who' and PROPER_NOUN_PATTERN.search(sentence):
+            bonus += 0.6
+        if q_type == 'where' and any(word in lowered for word in (' in ', ' at ', ' near ', ' from ', ' to ', ' located ', ' based ')):
+            bonus += 0.5
+        if q_type == 'how' and NUMBER_PATTERN.search(sentence):
+            bonus += 0.5
+        if q_type == 'why' and any(word in lowered for word in (' because ', ' due to ', ' since ', ' so that ', ' reason ')):
+            bonus += 0.6
+        return bonus
 
-    def answer(self, question: str, contexts: list[str]) -> str:
-        if not contexts:
-            return 'No documents are indexed yet. Upload a PDF or text file first.'
+    def _sentence_score(self, question: str, sentence: str, store: DocumentStore) -> float:
+        query_terms = Counter(tokenize(question))
+        sentence_terms = Counter(tokenize(sentence))
+        if not query_terms or not sentence_terms:
+            return 0.0
 
-        self.ensure_loaded()
-        merged_context = '\n\n'.join(contexts)
-        merged_context = merged_context[:MAX_CONTEXT_CHARS]
-        result = self.pipe(question=question, context=merged_context)
-        answer = result['answer'].strip()
-        return answer or 'I could not find a confident answer in the uploaded document.'
+        overlap = set(query_terms) & set(sentence_terms)
+        if not overlap:
+            return 0.0
+
+        score = 0.0
+        for term in overlap:
+            normalized_tf = sentence_terms[term] / max(sum(sentence_terms.values()), 1)
+            score += query_terms[term] * normalized_tf * store._idf(term)
+
+        lowered_question = clean_question(question).lower()
+        lowered_sentence = sentence.lower()
+        if lowered_question in lowered_sentence:
+            score += 1.0
+
+        score += 0.25 * len(overlap)
+        score += self._question_bonus(question_type(question), sentence)
+        score -= 0.0015 * len(sentence)
+        return score
+
+    def answer(self, question: str, records: list[ChunkRecord], store: DocumentStore) -> tuple[str, list[str]]:
+        if not records:
+            return 'No documents are indexed yet. Upload a PDF or text file first.', []
+
+        candidates: list[SentenceCandidate] = []
+        contexts: list[str] = []
+        for record in records:
+            contexts.append(record.text[:MAX_CONTEXT_CHARS])
+            for sentence in split_sentences(record.text):
+                score = self._sentence_score(question, sentence, store)
+                candidates.append(
+                    SentenceCandidate(
+                        text=sentence,
+                        source_name=record.source_name,
+                        chunk_id=record.chunk_id,
+                        score=score,
+                    )
+                )
+
+        candidates.sort(key=lambda item: item.score, reverse=True)
+        candidates = candidates[:MAX_SENTENCES_TO_SCAN]
+
+        if not candidates:
+            return 'I could not find a confident answer in the uploaded document.', contexts
+
+        best = candidates[0]
+        if best.score <= 0:
+            return 'I could not find a confident answer in the uploaded document.', contexts
+
+        answer_parts = [best.text]
+        if len(candidates) > 1:
+            second = candidates[1]
+            if second.chunk_id == best.chunk_id and second.score >= best.score * 0.82 and second.text != best.text:
+                answer_parts.append(second.text)
+
+        answer = ' '.join(answer_parts)
+        return answer[:MAX_CONTEXT_CHARS], contexts
 
 
 def extract_text_from_upload(upload: UploadFile) -> str:
@@ -286,7 +379,7 @@ async def health() -> dict[str, Any]:
         'status': 'ok',
         **store.stats(),
         'model_name': qa_service.model_name,
-        'model_loaded': qa_service.pipe is not None,
+        'model_loaded': True,
     }
 
 
@@ -314,8 +407,8 @@ async def ask_question(payload: AskRequest) -> AskResponse:
     if not question:
         raise HTTPException(status_code=400, detail='Question cannot be empty.')
 
-    contexts = [record.text for record in store.search(question, payload.top_k or TOP_K_CHUNKS)]
-    answer = qa_service.answer(question, contexts)
+    records = store.search(question, payload.top_k or TOP_K_CHUNKS)
+    answer, contexts = qa_service.answer(question, records, store)
     return AskResponse(
         answer=answer,
         contexts=contexts,
@@ -327,8 +420,8 @@ async def ask_question(payload: AskRequest) -> AskResponse:
 
 @app.post('/ask-form', response_class=HTMLResponse)
 async def ask_form(request: Request, question: str = Form(...)) -> HTMLResponse:
-    contexts = [record.text for record in store.search(question, TOP_K_CHUNKS)]
-    answer = qa_service.answer(question, contexts)
+    records = store.search(question, TOP_K_CHUNKS)
+    answer, contexts = qa_service.answer(question, records, store)
     return templates.TemplateResponse(
         'index.html',
         {
@@ -341,4 +434,3 @@ async def ask_form(request: Request, question: str = Form(...)) -> HTMLResponse:
             'contexts': contexts,
         },
     )
-

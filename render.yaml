@@ -10,9 +10,9 @@ services:
       - key: PYTHON_VERSION
         value: 3.11.9
       - key: QA_MODEL_TYPE
-        value: extractive
+        value: local-extractive
       - key: QA_MODEL_NAME
-        value: csarron/mobilebert-uncased-squad-v2
+        value: local-extractive-v2
       - key: USE_FAISS
         value: false
       - key: CHUNK_SIZE
@@ -20,7 +20,6 @@ services:
       - key: CHUNK_OVERLAP
         value: 120
       - key: TOP_K_CHUNKS
-        value: 2
+        value: 3
       - key: MAX_CONTEXT_CHARS
-        value: 1200
-
+        value: 1600

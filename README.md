@@ -102,3 +102,4 @@ gcloud app deploy
 - FAISS is optional; if disabled or unavailable, the app falls back to the built-in in-memory retrieval path.
 - The current default uses a smaller MobileBERT QA model to reduce deployment memory pressure.
 
+

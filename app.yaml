@@ -4,7 +4,6 @@ entrypoint: uvicorn app.main:app --host 0.0.0.0 --port $PORT
 instance_class: F2
 
 env_variables:
-  QA_MODEL_TYPE: "extractive"
-  QA_MODEL_NAME: "csarron/mobilebert-uncased-squad-v2"
+  QA_MODEL_TYPE: "local-extractive"
+  QA_MODEL_NAME: "local-extractive-v2"
   USE_FAISS: "false"
-
