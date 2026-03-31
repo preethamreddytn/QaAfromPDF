@@ -103,3 +103,4 @@ gcloud app deploy
 - The current default uses a smaller MobileBERT QA model to reduce deployment memory pressure.
 
 
+# QaAfromPDF
