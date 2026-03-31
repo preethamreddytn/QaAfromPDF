@@ -4,6 +4,6 @@ entrypoint: uvicorn app.main:app --host 0.0.0.0 --port $PORT
 instance_class: F2
 
 env_variables:
-  QA_MODEL_TYPE: "local-extractive"
-  QA_MODEL_NAME: "local-extractive-v2"
-  USE_FAISS: "false"
+  QA_MODEL_TYPE: "gemini-api"
+  QA_MODEL_NAME: "gemini-2.5-flash"
+

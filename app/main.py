@@ -1,3 +1,4 @@
+import json
 import logging
 import math
 import os
@@ -7,6 +8,7 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib import error, request
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse
@@ -22,12 +24,29 @@ BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / 'templates'
 STATIC_DIR = BASE_DIR / 'static'
 
+
+def load_local_env(env_path: Path) -> None:
+    if not env_path.exists():
+        return
+
+    for raw_line in env_path.read_text(encoding='utf-8').splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        key, value = line.split('=', 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+load_local_env(BASE_DIR.parent / '.env')
+
+DEFAULT_GEMINI_MODEL = os.getenv('QA_MODEL_NAME', 'gemini-2.5-flash')
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
+GEMINI_API_BASE = os.getenv('GEMINI_API_BASE', 'https://generativelanguage.googleapis.com/v1beta/models')
 MAX_CONTEXT_CHARS = int(os.getenv('MAX_CONTEXT_CHARS', '1600'))
 TOP_K_CHUNKS = int(os.getenv('TOP_K_CHUNKS', '3'))
 CHUNK_SIZE = int(os.getenv('CHUNK_SIZE', '700'))
 CHUNK_OVERLAP = int(os.getenv('CHUNK_OVERLAP', '120'))
 MAX_SENTENCES_TO_SCAN = int(os.getenv('MAX_SENTENCES_TO_SCAN', '24'))
-USE_FAISS = os.getenv('USE_FAISS', 'false').lower() == 'true'
 
 TOKEN_PATTERN = re.compile(r'\b[a-zA-Z0-9]+\b')
 SENTENCE_SPLIT_PATTERN = re.compile(r'(?<=[.!?])\s+')
@@ -110,28 +129,7 @@ class DocumentStore:
         self.records: list[ChunkRecord] = []
         self.document_frequencies: Counter[str] = Counter()
         self.total_documents = 0
-        self.faiss_index = None
-        self.embedding_model = None
         self.backend = 'memory'
-        self._init_optional_faiss()
-
-    def _init_optional_faiss(self) -> None:
-        if not USE_FAISS:
-            return
-
-        try:
-            import faiss  # type: ignore
-            from sentence_transformers import SentenceTransformer
-        except ImportError:
-            logger.warning('FAISS mode requested, but faiss-cpu or sentence-transformers is unavailable.')
-            return
-
-        model_name = os.getenv('EMBEDDING_MODEL', 'sentence-transformers/all-MiniLM-L6-v2')
-        self.embedding_model = SentenceTransformer(model_name)
-        dimension = self.embedding_model.get_sentence_embedding_dimension()
-        self.faiss_index = faiss.IndexFlatL2(dimension)
-        self.backend = 'faiss'
-        logger.info('Initialized FAISS backend with embedding model %s', model_name)
 
     def add_document(self, source_name: str, text: str) -> int:
         chunks = split_text(text)
@@ -153,32 +151,8 @@ class DocumentStore:
     def _rebuild_index(self) -> None:
         self.total_documents = len(self.records)
         self.document_frequencies = Counter()
-
-        if not self.records:
-            if self.faiss_index is not None:
-                self._reset_faiss_index()
-            return
-
         for record in self.records:
             self.document_frequencies.update(record.term_counts.keys())
-
-        if self.faiss_index is not None and self.embedding_model is not None:
-            self._reset_faiss_index()
-            embeddings = self.embedding_model.encode(
-                [record.text for record in self.records],
-                convert_to_numpy=True,
-                normalize_embeddings=True,
-            )
-            self.faiss_index.add(embeddings)
-
-    def _reset_faiss_index(self) -> None:
-        if self.embedding_model is None or self.faiss_index is None:
-            return
-
-        import faiss  # type: ignore
-
-        dimension = self.embedding_model.get_sentence_embedding_dimension()
-        self.faiss_index = faiss.IndexFlatL2(dimension)
 
     def _idf(self, term: str) -> float:
         frequency = self.document_frequencies.get(term, 0)
@@ -205,12 +179,6 @@ class DocumentStore:
             return []
 
         top_k = max(1, min(top_k, len(self.records)))
-        if self.backend == 'faiss' and self.faiss_index is not None and self.embedding_model is not None:
-            query_embedding = self.embedding_model.encode([question], convert_to_numpy=True, normalize_embeddings=True)
-            _, indices = self.faiss_index.search(query_embedding, top_k)
-            matches = [self.records[index] for index in indices[0] if index >= 0]
-            return matches or self.records[:top_k]
-
         query_terms = Counter(tokenize(question))
         if not query_terms:
             return self.records[:top_k]
@@ -230,12 +198,7 @@ class DocumentStore:
         }
 
 
-class QAService:
-    def __init__(self) -> None:
-        self.model_type = 'local-extractive'
-        self.model_name = 'local-extractive-v2'
-        self.pipe = None
-
+class LocalExtractiveFallback:
     def _question_bonus(self, q_type: str, sentence: str) -> float:
         lowered = sentence.lower()
         bonus = 0.0
@@ -285,34 +248,120 @@ class QAService:
         for record in records:
             contexts.append(record.text[:MAX_CONTEXT_CHARS])
             for sentence in split_sentences(record.text):
-                score = self._sentence_score(question, sentence, store)
                 candidates.append(
                     SentenceCandidate(
                         text=sentence,
                         source_name=record.source_name,
                         chunk_id=record.chunk_id,
-                        score=score,
+                        score=self._sentence_score(question, sentence, store),
                     )
                 )
 
         candidates.sort(key=lambda item: item.score, reverse=True)
         candidates = candidates[:MAX_SENTENCES_TO_SCAN]
-
-        if not candidates:
+        if not candidates or candidates[0].score <= 0:
             return 'I could not find a confident answer in the uploaded document.', contexts
 
         best = candidates[0]
-        if best.score <= 0:
-            return 'I could not find a confident answer in the uploaded document.', contexts
-
         answer_parts = [best.text]
         if len(candidates) > 1:
             second = candidates[1]
             if second.chunk_id == best.chunk_id and second.score >= best.score * 0.82 and second.text != best.text:
                 answer_parts.append(second.text)
 
-        answer = ' '.join(answer_parts)
-        return answer[:MAX_CONTEXT_CHARS], contexts
+        return ' '.join(answer_parts)[:MAX_CONTEXT_CHARS], contexts
+
+
+class QAService:
+    def __init__(self) -> None:
+        self.model_name = DEFAULT_GEMINI_MODEL
+        self.fallback = LocalExtractiveFallback()
+
+    def _build_prompt(self, question: str, contexts: list[str]) -> str:
+        merged_context = '\n\n'.join(contexts)[:MAX_CONTEXT_CHARS]
+        return (
+            'Answer the question using only the context below. '
+            'If the answer is not present, say you could not find it. '
+            'Respond in plain English with only the answer.\n\n'
+            f'Context:\n{merged_context}\n\n'
+            f'Question: {question}'
+        )
+
+    def _parse_gemini_response(self, payload: dict[str, Any]) -> str:
+        candidates = payload.get('candidates') or []
+        for candidate in candidates:
+            content = candidate.get('content') or {}
+            for part in content.get('parts') or []:
+                text = part.get('text')
+                if text:
+                    return str(text).strip()
+        return ''
+
+    def _call_gemini(self, prompt: str) -> str:
+        if not GEMINI_API_KEY:
+            raise HTTPException(status_code=500, detail='GEMINI_API_KEY is not configured on the server.')
+
+        model_path = self.model_name.removeprefix('models/')
+        api_url = f"{GEMINI_API_BASE.rstrip('/')}/{model_path}:generateContent?key={GEMINI_API_KEY}"
+        body = json.dumps(
+            {
+                'contents': [
+                    {
+                        'parts': [
+                            {'text': prompt}
+                        ]
+                    }
+                ],
+                'generationConfig': {
+                    'temperature': 0.2,
+                    'maxOutputTokens': 160,
+                },
+            }
+        ).encode('utf-8')
+        req = request.Request(
+            api_url,
+            data=body,
+            headers={
+                'Content-Type': 'application/json',
+            },
+            method='POST',
+        )
+        try:
+            with request.urlopen(req, timeout=60) as response:
+                raw = response.read().decode('utf-8')
+        except error.HTTPError as exc:
+            details = exc.read().decode('utf-8', errors='ignore')
+            logger.exception('Gemini API error: %s', details)
+            message = details.strip() or f'Gemini API request failed (status={exc.code}).'
+            raise HTTPException(status_code=502, detail=message) from exc
+        except error.URLError as exc:
+            logger.exception('Gemini API network error')
+            raise HTTPException(status_code=502, detail='Could not reach the Gemini API.') from exc
+
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=502, detail='Invalid response from Gemini API.') from exc
+
+        if isinstance(parsed, dict) and parsed.get('error'):
+            raise HTTPException(status_code=502, detail=json.dumps(parsed['error']))
+
+        text = self._parse_gemini_response(parsed)
+        if not text:
+            raise HTTPException(status_code=502, detail='Unexpected response from Gemini API.')
+        return text
+
+    def answer(self, question: str, records: list[ChunkRecord], store: DocumentStore) -> tuple[str, list[str], str]:
+        fallback_answer, contexts = self.fallback.answer(question, records, store)
+        if not records:
+            return fallback_answer, contexts, 'local-extractive-v2'
+
+        if not GEMINI_API_KEY:
+            return fallback_answer, contexts, 'local-extractive-v2'
+
+        prompt = self._build_prompt(question, contexts)
+        answer = self._call_gemini(prompt)
+        return (answer or fallback_answer), contexts, self.model_name
 
 
 def extract_text_from_upload(upload: UploadFile) -> str:
@@ -368,7 +417,7 @@ async def index(request: Request) -> HTMLResponse:
             'request': request,
             'stats': store.stats(),
             'model_name': qa_service.model_name,
-            'model_type': qa_service.model_type,
+            'model_type': 'gemini-api' if GEMINI_API_KEY else 'local-extractive-v2',
         },
     )
 
@@ -379,7 +428,7 @@ async def health() -> dict[str, Any]:
         'status': 'ok',
         **store.stats(),
         'model_name': qa_service.model_name,
-        'model_loaded': True,
+        'model_loaded': bool(GEMINI_API_KEY),
     }
 
 
@@ -408,29 +457,32 @@ async def ask_question(payload: AskRequest) -> AskResponse:
         raise HTTPException(status_code=400, detail='Question cannot be empty.')
 
     records = store.search(question, payload.top_k or TOP_K_CHUNKS)
-    answer, contexts = qa_service.answer(question, records, store)
+    answer, contexts, answer_source = qa_service.answer(question, records, store)
     return AskResponse(
         answer=answer,
         contexts=contexts,
         sources_indexed=len(store.records),
         retrieval_backend=store.backend,
-        model_type=qa_service.model_type,
+        model_type=answer_source,
     )
 
 
 @app.post('/ask-form', response_class=HTMLResponse)
 async def ask_form(request: Request, question: str = Form(...)) -> HTMLResponse:
     records = store.search(question, TOP_K_CHUNKS)
-    answer, contexts = qa_service.answer(question, records, store)
+    answer, contexts, answer_source = qa_service.answer(question, records, store)
     return templates.TemplateResponse(
         'index.html',
         {
             'request': request,
             'stats': store.stats(),
             'model_name': qa_service.model_name,
-            'model_type': qa_service.model_type,
+            'model_type': answer_source,
             'question': question,
             'answer': answer,
             'contexts': contexts,
         },
     )
+
+
+
